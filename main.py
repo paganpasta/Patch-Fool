@@ -10,6 +10,7 @@ import time
 from models.DeiT import deit_base_patch16_224, deit_tiny_patch16_224, deit_small_patch16_224
 from models.resnet import ResNet50, ResNet152, ResNet101
 from models.vision_transformer import vit_base_patch16_224, vit_small_patch16_224
+from models.custom_vit import CustomViT
 from utils import clamp, get_loaders, my_logger, my_meter, PCGrad
 from collections import OrderedDict
 from timm import create_model
@@ -26,7 +27,7 @@ def get_aug():
     parser.add_argument('--img_size', default=224, type=int)
     parser.add_argument('--workers', default=16, type=int)
     parser.add_argument('--ckpt-path', default=None, type=str)
-    parser.add_argument('--network', default='DeiT-B', type=str, choices=['vit_small_patch16_224','vit_base_patch16_224','DeiT-B', 'DeiT-S', 'DeiT-T',
+    parser.add_argument('--network', default='DeiT-B', type=str, choices=['custom_vit','vit_small_patch16_224','vit_base_patch16_224','DeiT-B', 'DeiT-S', 'DeiT-T',
                                                                            'ResNet152', 'ResNet50', 'ResNet18'])
     parser.add_argument('--dataset_size', default=1.0, type=float, help='Use part of Eval set')
 
@@ -114,24 +115,33 @@ def main():
         model = deit_small_patch16_224(pretrained=True)
     elif args.network == 'DeiT-B':
         model = deit_base_patch16_224(pretrained=True)
-    elif 'vit' in args.network:
+    elif args.network in ['vit_small_patch16_224','vit_base_patch16_224']:
         model = vit_base_patch16_224() if 'base' in args.network else vit_small_patch16_224()
         m = create_model(args.network, pretrained=True)
         state_dict = m.state_dict()
         model.load_state_dict(state_dict)
-
+    elif 'custom_vit' in args.network:
+        model = CustomViT()
     else:
         print('Wrong Network')
         raise
     print(model)
     if args.ckpt_path:
-        ckpt = torch.load(args.ckpt_path, map_location='cpu')
-        state_dict = ckpt['model_state_dict'] if 'model_state_dict' in ckpt.keys() else ckpt['state_dict']
-        new_dict = OrderedDict()
-        for k, v in state_dict.items():
-            if k[0] == '1':
-                new_dict[k[2:]] = v
-        model.load_state_dict(new_dict)
+        if '.npz' not in args.ckpt_path:
+          ckpt = torch.load(args.ckpt_path, map_location='cpu')
+          if 'state_dict' in ckpt.keys() or 'model_state_dict' in ckpt.keys():
+            state_dict = ckpt['model_state_dict'] if 'model_state_dict' in ckpt.keys() else ckpt['state_dict']
+            new_dict = OrderedDict()
+            for k, v in state_dict.items():
+                if k[0] == '1':
+                    new_dict[k[2:]] = v
+            model.load_state_dict(new_dict)
+          else:
+            state_dict = ckpt['model']
+            model.load_state_dict(state_dict)
+        else:
+            from timm.models.vision_transformer import _load_weights
+            _load_weights(model, args.ckpt_path)
     model = model.cuda()
     model = torch.nn.DataParallel(model)
     model.eval()
